@@ -69,7 +69,7 @@ print("Quantization config:", q_config)
 
 def build_model_and_enc(model_path):
     if not os.path.exists(model_path):  # look into ssd
-        raise FileNotFoundError(f"{model_path} not found!")
+        print(f"{model_path} not found!")
     print(f"* Building model {model_path}")
 
     # all hf model
