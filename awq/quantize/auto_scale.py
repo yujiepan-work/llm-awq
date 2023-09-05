@@ -32,7 +32,7 @@ def get_act_scale(x):
 def scale_ln_fcs(ln, fcs, scales):
     if not isinstance(fcs, list):
         fcs = [fcs]
-    
+
     scales = scales.to(ln.weight.device)
 
     # debugging start even scales = 1 does not work?
@@ -61,7 +61,7 @@ def scale_fc_fc(fc1, fc2, scales):
     assert isinstance(fc1, nn.Linear)
     assert isinstance(fc2, nn.Linear)
     # assert fc1.out_features == fc2.in_features
-    
+
     scales = scales.to(fc1.weight.device)
 
     # fc1.weight.div_(scales.view(-1, 1))
@@ -86,7 +86,7 @@ def scale_gelu_fc(gelu, fc, scales):
 
     for p in fc.parameters():
         assert torch.isnan(p).sum() == 0
-    
+
 
 @torch.no_grad()
 def auto_scale_block(module, module_kwargs,
@@ -134,8 +134,9 @@ def auto_scale_block(module, module_kwargs,
         org_sd = {k: v.cpu() for k, v in block.state_dict().items()}
         for ratio in range(n_grid):
             ratio = ratio * 1 / n_grid
-            scales = (x_max.pow(ratio) / w_max.pow(1-ratio)
-                      ).clamp(min=1e-4).view(-1)
+            scales = (x_max.pow(ratio) / w_max.pow(1 - ratio)
+                      ).nan_to_num().clamp(min=1e-4).view(-1)
+            # since the weights are sparsified, w_max might be zero, so we need `nan_to_num`
             scales = scales / (scales.max() * scales.min()).sqrt()
             for fc in linears2scale:
                 fc.weight.mul_(scales.view(1, -1).to(fc.weight.device))
@@ -233,7 +234,7 @@ def auto_scale_block(module, module_kwargs,
             layers=[module.mlp.down_proj],
             inp=input_feat['mlp.down_proj'],
         ))
-    
+
     elif isinstance(module, BloomBlock):
         # attention input
         scales_list.append(_auto_get_scale(
@@ -270,10 +271,10 @@ def auto_scale_block(module, module_kwargs,
             prev_op=module.norm_1,
             layers=[module.attn.Wqkv],
             inp=input_feat['attn.Wqkv'],
-            module2inspect=module.attn, 
+            module2inspect=module.attn,
             kwargs=module_kwargs,
         ))
-        
+
         # attn out
         scales_list.append(_auto_get_scale(
             prev_op=module.attn.Wqkv,
@@ -294,7 +295,7 @@ def auto_scale_block(module, module_kwargs,
             inp=input_feat['ffn.down_proj'],
         ))
 
-    elif "falcon" in str(module.__class__).lower():         
+    elif "falcon" in str(module.__class__).lower():
         # attn out
         # Haotian: TBD: need to handle repeated scales for MQ
         """ 
@@ -336,11 +337,12 @@ def auto_scale_block(module, module_kwargs,
             layers=[module.mlp.dense_4h_to_h],
             inp=input_feat['mlp.dense_4h_to_h'],
         ))
-    
+
     else:
         raise NotImplementedError(f"{type(module)} not supported yet!")
 
     return scales_list
+
 
 def apply_scale(module, scales_list, input_feat_dict=None):
     for prev_op_name, layer_names, scales in scales_list:
@@ -351,7 +353,7 @@ def apply_scale(module, scales_list, input_feat_dict=None):
         for layer in layers:
             layer.cuda()
         scales.cuda()
-        
+
         if isinstance(prev_op, nn.Linear):
             assert len(layers) == 1
             scale_fc_fc(prev_op, layers[0], scales)
@@ -364,9 +366,9 @@ def apply_scale(module, scales_list, input_feat_dict=None):
         else:
             raise NotImplementedError(
                 f"prev_op {type(prev_op)} not supported yet!")
-            
+
         # apply the scaling to input feat if given; prepare it for clipping
-        if input_feat_dict is not None:  
+        if input_feat_dict is not None:
             for layer_name in layer_names:
                 inp = input_feat_dict[layer_name]
                 inp.div_(scales.view(1, -1).to(inp.device))

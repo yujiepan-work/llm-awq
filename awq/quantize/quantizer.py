@@ -20,7 +20,7 @@ def scale_activations(module):
             return
         c = module.mlp.dense_h_to_4h.out_features
         act = ScaledActivation(
-            module.mlp.gelu_impl, 
+            module.mlp.gelu_impl,
             torch.ones(c, dtype=dtype, device=device)
         )
         set_op_by_name(module, "mlp.gelu_impl", act)
@@ -29,7 +29,7 @@ def scale_activations(module):
             return
         c = module.ffn.up_proj.out_features
         act = ScaledActivation(
-            module.ffn.act, 
+            module.ffn.act,
             torch.ones(c, dtype=dtype, device=device)
         )
         set_op_by_name(module, "ffn.act", act)
@@ -38,11 +38,11 @@ def scale_activations(module):
             return
         c = module.mlp.dense_h_to_4h.out_features
         act = ScaledActivation(
-            module.mlp.act, 
+            module.mlp.act,
             torch.ones(c, dtype=dtype, device=device)
         )
         set_op_by_name(module, "mlp.act", act)
-    
+
 
 # core quantization method (simulated quantization)
 def pseudo_quantize_tensor(w, n_bit=8,
@@ -71,15 +71,15 @@ def pseudo_quantize_tensor(w, n_bit=8,
         scales = max_val / max_int
         zeros = 0
 
-    assert torch.isnan(scales).sum() == 0
+    assert torch.isnan(scales).sum() == 0, (max_val, min_val, w.detach().cpu().numpy().tolist())
     assert torch.isnan(w).sum() == 0
 
     if inplace:
         ((w.div_(scales).round_().add_(zeros)).clamp_(
             min_int, max_int).sub_(zeros)).mul_(scales)
     else:
-        w = (torch.clamp(torch.round(w / scales) +
-                         zeros, min_int, max_int) - zeros) * scales
+        w = (torch.clamp(torch.round(w / scales)
+                         + zeros, min_int, max_int) - zeros) * scales
     assert torch.isnan(w).sum() == 0
 
     w = w.reshape(org_w_shape)
@@ -89,10 +89,11 @@ def pseudo_quantize_tensor(w, n_bit=8,
     else:
         return w
 
+
 @torch.no_grad()
 def pseudo_quantize_model_weight(
     model, w_bit, q_config,
-):    
+):
     from .pre_quant import get_blocks, get_named_linears
     layers = get_blocks(model)
     for i in tqdm(range(len(layers)), desc="pseudo weight quantization..."):
@@ -111,7 +112,7 @@ def real_quantize_model_weight(
     from .qmodule import WQLinear
     from .pre_quant import get_blocks, get_named_linears
     assert q_config["zero_point"], "We only support zero_point quantization now."
-    
+
     layers = get_blocks(model)
     for i in tqdm(range(len(layers)), desc="real weight quantization..." + ("(init only)" if init_only else "")):
         layer = layers[i]
@@ -136,6 +137,6 @@ def real_quantize_model_weight(
                 set_op_by_name(layer, name, q_linear)
                 torch.cuda.empty_cache()
                 gc.collect()
-                
+
     torch.cuda.empty_cache()
     gc.collect()
