@@ -136,8 +136,6 @@ def run_awq(
             h.remove()
         # now solve for scaling and clipping
         input_feat = {k: torch.cat(v, dim=0) for k, v in input_feat.items()}
-        for k, v in input_feat.items():
-            print(k, v.shape)
 
         # Clear GPU memory
         torch.cuda.empty_cache()
