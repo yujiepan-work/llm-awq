@@ -4,6 +4,7 @@ import torch
 import argparse
 import os
 import json
+import numpy as np
 from accelerate import init_empty_weights, infer_auto_device_map, dispatch_model, load_checkpoint_in_model
 from accelerate.utils.modeling import get_balanced_memory
 from awq.utils.parallel import auto_parallel
@@ -24,10 +25,10 @@ parser.add_argument('--parallel', action='store_true',
                     help="enable model parallelism")
 # max memory to offload larger models to CPU
 parser.add_argument('--max_memory', type=str, nargs='*',
-                    help="List of device_id:max_memory pairs to be parsed into a dictionary; " \
-                        + "Example: 0:10GiB 1:10GiB cpu:30GiB; " \
-                        + "mode details here: " \
-                        + "https://huggingface.co/docs/accelerate/usage_guides/big_modeling")
+                    help="List of device_id:max_memory pairs to be parsed into a dictionary; "
+                    + "Example: 0:10GiB 1:10GiB cpu:30GiB; "
+                    + "mode details here: "
+                    + "https://huggingface.co/docs/accelerate/usage_guides/big_modeling")
 parser.add_argument('--auto_parallel', action='store_true',
                     help="automatically set parallel and batch_size")
 # quantization config
@@ -49,10 +50,12 @@ parser.add_argument('--dump_awq', type=str, default=None,
                     help="save the awq search results")
 parser.add_argument('--load_awq', type=str, default=None,
                     help="load the awq search results")
+parser.add_argument('--apply_sparse_mask', type=str, default=None,
+                    help="apply the sparse masks before running awq")
 args = parser.parse_args()
 
 max_memory = [v.split(':') for v in (args.max_memory or [])]
-max_memory = {(int(k) if k.isdigit() else k):v for k,v in max_memory}
+max_memory = {(int(k) if k.isdigit() else k): v for k, v in max_memory}
 
 if args.auto_parallel:
     gpu_list = auto_parallel(args)
@@ -64,6 +67,38 @@ q_config = {
 
 }
 print("Quantization config:", q_config)
+
+
+def to_encoded_array(tensor_or_array):
+    if isinstance(tensor_or_array, torch.Tensor):
+        array = tensor_or_array.cpu().contiguous().numpy()
+    else:
+        array = tensor_or_array
+    shape = array.shape
+    encoded_array = np.packbits(array.reshape(-1))
+    return encoded_array, list(shape)
+
+def from_encoded_array(encoded_array, shape):
+    array = np.unpackbits(encoded_array)
+    tensor = torch.from_numpy(array)
+    return tensor[:np.prod(shape)].reshape(shape)
+
+
+def apply_mask_to_model(model, mask_dict_path):
+    import numpy as np
+    mask_dict = torch.load(mask_dict_path)
+    keys = list(mask_dict.keys())
+    with torch.no_grad():
+        for name, param in model.named_parameters():
+            if name in mask_dict:
+                print('Applying mask to', name)
+                mask_np = from_encoded_array(*mask_dict[name])
+                keys.remove(name)
+                mask = torch.from_numpy(mask_np).to(param.device)
+                param.data[mask] = 0  # set weights to zero
+        assert len(keys) == 0
+    return model
+
 
 # build model and tokenizer
 
@@ -86,9 +121,9 @@ def build_model_and_enc(model_path):
                                                      torch_dtype=torch.float16, trust_remote_code=True)
         real_quantize_model_weight(
             model, w_bit=args.w_bit, q_config=q_config, init_only=True)
-        
+
         model.tie_weights()
-        
+
         # Infer device map
         kwargs = {"max_memory": max_memory} if len(max_memory) else {}
         device_map = infer_auto_device_map(
@@ -114,12 +149,15 @@ def build_model_and_enc(model_path):
         kwargs = {"torch_dtype": torch.float16, "low_cpu_mem_usage": True}
         model = AutoModelForCausalLM.from_pretrained(
             model_path, config=config, trust_remote_code=True, **kwargs)
+        if args.apply_sparse_mask is not None:
+            print('Applying mask dict', args.apply_sparse_mask)
+            model = apply_mask_to_model(model, args.apply_sparse_mask)
 
         model.eval()
 
         if args.run_awq:
             assert args.dump_awq, "Please save the awq results with --dump_awq"
-                        
+
             awq_results = run_awq(
                 model, enc,
                 w_bit=args.w_bit, q_config=q_config,
@@ -128,12 +166,12 @@ def build_model_and_enc(model_path):
             if args.dump_awq:
                 dirpath = os.path.dirname(args.dump_awq)
                 os.makedirs(dirpath, exist_ok=True)
-                
+
                 torch.save(awq_results, args.dump_awq)
                 print("AWQ results saved at", args.dump_awq)
-                
+
             exit(0)
-                
+
         if args.load_awq:
             print("Loading pre-computed AWQ results from", args.load_awq)
             awq_results = torch.load(args.load_awq, map_location="cpu")
@@ -154,14 +192,14 @@ def build_model_and_enc(model_path):
                 if args.dump_quant:
                     dirpath = os.path.dirname(args.dump_quant)
                     os.makedirs(dirpath, exist_ok=True)
-                    
+
                     print(
                         f"Saving the quantized model at {args.dump_quant}...")
                     torch.save(model.cpu().state_dict(), args.dump_quant)
                     exit(0)
             else:
                 raise NotImplementedError
-            
+
         # Move the model to GPU (as much as possible) for LM evaluation
         kwargs = {"max_memory": get_balanced_memory(model, max_memory if len(max_memory) > 0 else None)}
         device_map = infer_auto_device_map(
