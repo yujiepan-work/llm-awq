@@ -92,9 +92,9 @@ def apply_mask_to_model(model, mask_dict_path):
         for name, param in model.named_parameters():
             if name in mask_dict:
                 print('Applying mask to', name)
-                mask_np = from_encoded_array(*mask_dict[name])
+                mask_tensor = from_encoded_array(*mask_dict[name])
                 keys.remove(name)
-                mask = torch.from_numpy(mask_np).to(param.device)
+                mask = mask_tensor.to(param.device)
                 param.data[mask] = 0  # set weights to zero
         assert len(keys) == 0
     return model
