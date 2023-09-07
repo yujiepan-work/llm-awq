@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import numpy as np
 from tqdm import tqdm
 import gc
 from .qmodule import ScaledActivation
@@ -48,7 +49,8 @@ def scale_activations(module):
 def pseudo_quantize_tensor(w, n_bit=8,
                            zero_point=True, q_group_size=-1,
                            inplace=False,
-                           get_scale_zp=False
+                           get_scale_zp=False,
+                           get_quantized_w=False,
                            ):
     org_w_shape = w.shape
     if q_group_size > 0:
@@ -80,12 +82,18 @@ def pseudo_quantize_tensor(w, n_bit=8,
     else:
         w = (torch.clamp(torch.round(w / scales)
                          + zeros, min_int, max_int) - zeros) * scales
+        if get_quantized_w:
+            w_fake_quantized = torch.clamp(torch.round(w / scales) + zeros, min_int, max_int)
+            w_fake_quantized = w_fake_quantized.cpu().reshape(org_w_shape)
+
     assert torch.isnan(w).sum() == 0
 
     w = w.reshape(org_w_shape)
 
     if get_scale_zp:
         return w, scales.view(w.shape[0], -1), zeros.view(w.shape[0], -1)
+    elif get_quantized_w:
+        return w, w_fake_quantized
     else:
         return w
 
@@ -95,13 +103,27 @@ def pseudo_quantize_model_weight(
     model, w_bit, q_config,
 ):
     from .pre_quant import get_blocks, get_named_linears
+    sparsity_summary = {}
+    model: torch.nn.Module
+    module2fullname = {module: name for name, module in model.named_modules()}
+
     layers = get_blocks(model)
     for i in tqdm(range(len(layers)), desc="pseudo weight quantization..."):
         named_linears = get_named_linears(layers[i])
         for n, m in named_linears.items():
             m.cuda()
-            m.weight.data = pseudo_quantize_tensor(m.weight.data, n_bit=w_bit, **q_config)
+            m.weight.data, w_quantized = pseudo_quantize_tensor(m.weight.data, n_bit=w_bit, get_quantized_w=True, **q_config)
             m.cpu()
+
+            sparsity = (w_quantized == 0).float().mean().item()
+            full_name = module2fullname[m]
+            sparsity_summary[full_name] = sparsity
+            print(f'{full_name} quantized-sparsity = {sparsity}')
+
+    return {
+        'sparsity_per_layer': sparsity_summary,
+        'model_sparsity': np.mean(list(sparsity_summary.values()))
+    }
 
 
 @torch.no_grad()

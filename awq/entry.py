@@ -12,13 +12,14 @@ from awq.quantize.pre_quant import run_awq, apply_awq
 from awq.quantize.quantizer import pseudo_quantize_model_weight, real_quantize_model_weight
 from awq.utils.lm_eval_adaptor import LMEvalAdaptor
 from awq.utils.utils import simple_dispatch_model
-
+from pathlib import Path
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--model_path', type=str, help='path of the hf model')
 parser.add_argument('--batch_size', type=int, default=1, help='batch size')
 parser.add_argument("--tasks", default=None, type=str)
-parser.add_argument("--output_path", default=None, type=str)
+parser.add_argument("--output_path", default=None, type=str, help='output txt path, by awq author')
+parser.add_argument("--output_folder", default=None, type=str, help='folder to save all kinds of info, added by yujie')
 parser.add_argument('--num_fewshot', type=int, default=0)
 # model config
 parser.add_argument('--parallel', action='store_true',
@@ -77,6 +78,7 @@ def to_encoded_array(tensor_or_array):
     shape = array.shape
     encoded_array = np.packbits(array.reshape(-1))
     return encoded_array, list(shape)
+
 
 def from_encoded_array(encoded_array, shape):
     array = np.unpackbits(encoded_array)
@@ -182,9 +184,17 @@ def build_model_and_enc(model_path):
             if args.q_backend == "fake":
                 assert args.dump_quant is None, \
                     "Need to use real quantization to dump quantized weights"
-                pseudo_quantize_model_weight(
+                _result = pseudo_quantize_model_weight(
                     model, w_bit=args.w_bit, q_config=q_config
                 )
+                if args.output_folder is not None:
+                    Path(args.output_folder).mkdir(exist_ok=True, parents=True)
+                    with open(Path(args.output_folder, 'quantized_sparsity.json'), 'w', encoding='utf-8') as f:
+                        json.dump({
+                            'sparsity_per_layer': _result['sparsity_per_layer'],
+                            "model_sparsity": _result['model_sparsity'],
+                        }, f)
+
             elif args.q_backend == "real":  # real quantization
                 real_quantize_model_weight(
                     model, w_bit=args.w_bit, q_config=q_config
