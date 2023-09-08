@@ -120,6 +120,8 @@ def pseudo_quantize_model_weight(
             sparsity_summary[full_name] = sparsity
             print(f'{full_name} quantized-sparsity = {sparsity}')
 
+    print('model_sparsity', np.mean(list(sparsity_summary.values())))
+
     return {
         'sparsity_per_layer': sparsity_summary,
         'model_sparsity': np.mean(list(sparsity_summary.values()))
