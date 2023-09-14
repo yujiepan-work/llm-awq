@@ -212,6 +212,9 @@ def build_model_and_enc(model_path):
 
         # Move the model to GPU (as much as possible) for LM evaluation
         kwargs = {"max_memory": get_balanced_memory(model, max_memory if len(max_memory) > 0 else None)}
+        for key in list(kwargs['max_memory'].keys()):
+            if str(key).isdigit():
+                kwargs['max_memory'][key] = int(kwargs['max_memory'][key] * 0.8)
         device_map = infer_auto_device_map(
             model,
             # TODO: can we remove this?
@@ -219,6 +222,7 @@ def build_model_and_enc(model_path):
                 "OPTDecoderLayer", "LlamaDecoderLayer", "BloomBlock", "MPTBlock", "DecoderLayer"],
             **kwargs
         )
+        print(device_map, flush=True)
         model = dispatch_model(model, device_map=device_map)
 
     return model, enc
