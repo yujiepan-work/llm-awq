@@ -53,6 +53,9 @@ parser.add_argument('--load_awq', type=str, default=None,
                     help="load the awq search results")
 parser.add_argument('--apply_sparse_mask', type=str, default=None,
                     help="apply the sparse masks before running awq")
+
+# disable the auto_dispatch when loading the quantized model
+parser.add_argument('--no_auto_dispatch', action='store_false', dest='auto_dispatch')
 args = parser.parse_args()
 
 max_memory = [v.split(':') for v in (args.max_memory or [])]
@@ -209,6 +212,9 @@ def build_model_and_enc(model_path):
                     exit(0)
             else:
                 raise NotImplementedError
+
+        if not args.auto_dispatch:
+            return model, enc
 
         # Move the model to GPU (as much as possible) for LM evaluation
         kwargs = {"max_memory": get_balanced_memory(model, max_memory if len(max_memory) > 0 else None)}
