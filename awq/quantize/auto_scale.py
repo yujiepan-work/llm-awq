@@ -5,6 +5,7 @@ import torch.nn as nn
 from transformers.models.bloom.modeling_bloom import BloomBlock, BloomGelu
 from transformers.models.opt.modeling_opt import OPTDecoderLayer
 from transformers.models.llama.modeling_llama import LlamaDecoderLayer, LlamaRMSNorm
+from transformers.models.mistral.modeling_mistral import MistralDecoderLayer, MistralRMSNorm
 
 from .qmodule import ScaledActivation
 from ..utils.module import get_op_by_name, get_op_name, set_op_by_name
@@ -204,7 +205,7 @@ def auto_scale_block(module, module_kwargs,
             inp=input_feat['fc2'],
         ))
 
-    elif isinstance(module, LlamaDecoderLayer):
+    elif isinstance(module, (LlamaDecoderLayer, MistralDecoderLayer)):
         # attention input
         scales_list.append(_auto_get_scale(
             prev_op=module.input_layernorm,
@@ -357,7 +358,7 @@ def apply_scale(module, scales_list, input_feat_dict=None):
         if isinstance(prev_op, nn.Linear):
             assert len(layers) == 1
             scale_fc_fc(prev_op, layers[0], scales)
-        elif isinstance(prev_op, (nn.LayerNorm, LlamaRMSNorm)):
+        elif isinstance(prev_op, (nn.LayerNorm, LlamaRMSNorm, MistralRMSNorm)):
             scale_ln_fcs(prev_op, layers, scales)
         elif isinstance(prev_op, nn.GELU) or isinstance(prev_op, BloomGelu):
             new_module = ScaledActivation(prev_op, scales)
